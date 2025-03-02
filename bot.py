@@ -70,12 +70,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "📚 *Доступные команды:*\n\n"
         "/start - Перезапуск бота\n"
         "/add_keywords - Добавить ключевые слова для поиска\n"
+        "Пример: /add_keywords \"junior media buyer\" \"python разработчик\"\n\n"
         "/remove_keywords - Удалить ключевые слова\n"
         "/list_keywords - Показать текущие ключевые слова\n"
         "/search - Выполнить поиск вакансий сейчас\n"
         "/settings - Настройки уведомлений\n"
         "/help - Показать эту справку\n\n"
-        "🔍 Бот автоматически ищет вакансии в режиме удаленной работы по всем городам и странам."
+        "🔍 Бот автоматически ищет вакансии в режиме удаленной работы по всем городам и странам.\n"
+        "⚠️ Важно: Используйте кавычки для поиска точной фразы, например: \"junior media buyer\""
     )
     await update.message.reply_text(help_text, parse_mode="Markdown")
 
@@ -86,54 +88,61 @@ async def add_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     
     if not context.args:
         await update.message.reply_text(
-            "Укажите ключевые слова через пробел или в кавычках.\n"
-            "Пример: /add_keywords python django\n"
-            "Или: /add_keywords \"python разработчик\" java"
+            "Укажите ключевые слова в кавычках для поиска точных фраз.\n"
+            "Пример: /add_keywords \"junior media buyer\" \"python разработчик\"\n\n"
+            "⚠️ Важно: Используйте кавычки для каждой отдельной фразы!"
         )
         return
     
-    # Обработка аргументов с учетом кавычек
+    # Объединяем аргументы в строку для анализа
+    input_text = ' '.join(context.args)
+    
+    # Ищем все фразы в кавычках
     new_keywords = []
-    current_keyword = ""
     in_quotes = False
+    current_keyword = ""
     
-    for arg in ' '.join(context.args).strip():
-        if arg == '"' and not in_quotes:
+    for char in input_text:
+        if char == '"' and not in_quotes:
             in_quotes = True
-        elif arg == '"' and in_quotes:
+        elif char == '"' and in_quotes:
             in_quotes = False
-            if current_keyword:
+            if current_keyword.strip():
                 new_keywords.append(current_keyword.strip())
-                current_keyword = ""
+            current_keyword = ""
         elif in_quotes:
-            current_keyword += arg
-        elif arg == ' ' and not in_quotes:
-            if current_keyword:
-                new_keywords.append(current_keyword.strip())
-                current_keyword = ""
-        else:
-            current_keyword += arg
+            current_keyword += char
     
-    if current_keyword:
-        new_keywords.append(current_keyword.strip())
+    # Если остались слова без кавычек, добавляем их как отдельные ключевые слова
+    remaining = input_text
+    for keyword in new_keywords:
+        remaining = remaining.replace(f'"{keyword}"', '')
+    
+    for word in remaining.split():
+        if word.strip() and word.strip() != '"':
+            new_keywords.append(word.strip())
     
     # Добавление ключевых слов
+    added_keywords = []
     for keyword in new_keywords:
         if keyword and keyword not in user_data[str(user_id)]["keywords"]:
             user_data[str(user_id)]["keywords"].append(keyword)
+            added_keywords.append(keyword)
     
     save_data()
     
-    if new_keywords:
+    if added_keywords:
         keywords_list = "\n• ".join(user_data[str(user_id)]["keywords"])
         await update.message.reply_text(
-            f"✅ Ключевые слова успешно добавлены!\n\n"
+            f"✅ Добавлены ключевые слова: {', '.join(added_keywords)}\n\n"
             f"🔍 Текущие ключевые слова:\n• {keywords_list}\n\n"
             f"🔄 Выполняю поиск вакансий..."
         )
         await search_vacancies(update, context)
     else:
-        await update.message.reply_text("❌ Не удалось добавить ключевые слова. Проверьте формат ввода.")
+        await update.message.reply_text(
+            "❌ Не удалось добавить ключевые слова. Проверьте формат ввода.\n"
+            "Используйте кавычки для поиска точных фраз, например: /add_keywords \"junior media buyer\"")
 
 async def remove_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик команды /remove_keywords"""
@@ -146,7 +155,10 @@ async def remove_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     
     keyboard = []
     for keyword in user_data[str(user_id)]["keywords"]:
-        keyboard.append([InlineKeyboardButton(f"❌ {keyword}", callback_data=f"remove_{keyword}")])
+        # Используем Base64 для безопасной передачи ключевых слов через callback_data
+        # Но для простоты в этом примере используем прямую передачу с ограничением длины
+        display_keyword = keyword if len(keyword) < 30 else keyword[:27] + "..."
+        keyboard.append([InlineKeyboardButton(f"❌ {display_keyword}", callback_data=f"remove_{keyword}")])
     
     keyboard.append([InlineKeyboardButton("✅ Готово", callback_data="remove_done")])
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -162,7 +174,7 @@ async def list_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text("У вас нет сохраненных ключевых слов. Добавьте их с помощью /add_keywords.")
         return
     
-    keywords_list = "\n• ".join(user_data[str(user_id)]["keywords"])
+    keywords_list = "\n• ".join([f'"{kw}"' for kw in user_data[str(user_id)]["keywords"]])
     await update.message.reply_text(f"🔍 Ваши ключевые слова:\n• {keywords_list}")
 
 async def search_vacancies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -182,7 +194,9 @@ async def search_vacancies(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     # Получаем вакансии для каждого ключевого слова
     all_vacancies = []
     for keyword in user_data[str(user_id)]["keywords"]:
-        vacancies = fetch_vacancies(keyword)
+        # Используем специальный формат поиска для точного соответствия
+        # Для hh.ru поиск по заголовку вакансии с оператором "name:"
+        vacancies = fetch_vacancies(f'NAME:"{keyword}"')
         if vacancies:
             all_vacancies.extend(vacancies)
     
@@ -287,7 +301,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Обновляем кнопки
         keyboard = []
         for kw in user_data[str(user_id)]["keywords"]:
-            keyboard.append([InlineKeyboardButton(f"❌ {kw}", callback_data=f"remove_{kw}")])
+            display_keyword = kw if len(kw) < 30 else kw[:27] + "..."
+            keyboard.append([InlineKeyboardButton(f"❌ {display_keyword}", callback_data=f"remove_{kw}")])
         
         keyboard.append([InlineKeyboardButton("✅ Готово", callback_data="remove_done")])
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -377,7 +392,7 @@ def fetch_vacancies(keyword):
     try:
         url = "https://api.hh.ru/vacancies"
         params = {
-            "text": keyword,
+            "text": keyword,  # Теперь передаем строку с оператором NAME
             "schedule": "remote",  # Удаленная работа
             "per_page": 100,       # Максимальное количество вакансий на страницу
             "order_by": "publication_time"  # Сортировка по дате публикации
@@ -391,6 +406,7 @@ def fetch_vacancies(keyword):
         response.raise_for_status()
         
         data = response.json()
+        logger.info(f"Найдено {data.get('found', 0)} вакансий по запросу: {keyword}")
         return data.get("items", [])
     
     except Exception as e:
@@ -423,7 +439,7 @@ async def check_new_vacancies(context: ContextTypes.DEFAULT_TYPE) -> None:
         # Получаем вакансии для каждого ключевого слова
         all_vacancies = []
         for keyword in data["keywords"]:
-            vacancies = fetch_vacancies(keyword)
+            vacancies = fetch_vacancies(f'NAME:"{keyword}"')
             if vacancies:
                 all_vacancies.extend(vacancies)
         
